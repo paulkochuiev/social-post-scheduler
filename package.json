@@ -1,0 +1,17 @@
+{
+    "name": "social-post-scheduler",
+    "version": "0.1.0",
+    "private": false,
+    "type": "module",
+    "scripts": {
+      "build": "tsc",
+      "start": "node dist/simulate.js",
+      "dev": "tsx src/simulate.ts",
+      "test": "vitest run"
+    },
+    "devDependencies": {
+      "typescript": "^5.6.0",
+      "tsx": "^4.19.0",
+      "vitest": "^2.1.0"
+    }
+  }
