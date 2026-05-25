@@ -8,7 +8,18 @@ import type {
   ScheduleMetrics,
   ScheduledPost,
   SchedulerConfig,
+  TimeSlot,
 } from "./types.js";
+
+export class SchedulingError extends Error {
+  constructor(
+    message: string,
+    readonly intent: PostIntent,
+  ) {
+    super(message);
+    this.name = "SchedulingError";
+  }
+}
 
 export function generateIntents(
   matrix: IntentMatrix,
@@ -31,6 +42,23 @@ export function generateIntents(
         platformId,
         desiredTime: dist.sample(),
       });
+    }
+  }
+
+  return intents;
+}
+
+/** Every (user, platform) posts at the same desiredTime — demo congestion / delay. */
+export function generateSynchronizedIntents(
+  userCount: number,
+  platformCount: number,
+  desiredTime: TimeSlot,
+): PostIntent[] {
+  const intents: PostIntent[] = [];
+
+  for (let userId = 0; userId < userCount; userId++) {
+    for (let platformId = 0; platformId < platformCount; platformId++) {
+      intents.push({ userId, platformId, desiredTime });
     }
   }
 
@@ -71,11 +99,10 @@ export function schedulePosts(
     }
 
     if (t >= daySeconds) {
-      t = daySeconds - 1;
-
-      while ((occupied.has(t) || t <= lastScheduled) && t > 0) {
-        t -= 1;
-      }
+      throw new SchedulingError(
+        `No slot available on day window [0, ${daySeconds}) for intent`,
+        intent,
+      );
     }
 
     occupied.add(t);

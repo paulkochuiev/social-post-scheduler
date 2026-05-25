@@ -62,6 +62,29 @@ export function buildDemoIntentMatrix(
   return { postProbability, timeDistribution };
 }
 
+/** Many users peak at noon with high post probability — stresses EDCR delays. */
+export function buildCongestedIntentMatrix(
+  userCount: number,
+  platformCount: number,
+  daySeconds: number,
+): IntentMatrix {
+  const postProbability: number[][] = [];
+  const timeDistribution: TimeDistribution[][] = [];
+  const peak = gaussianPeak(daySeconds, 12, 0.25);
+
+  for (let i = 0; i < userCount; i++) {
+    postProbability[i] = [];
+    timeDistribution[i] = [];
+
+    for (let j = 0; j < platformCount; j++) {
+      postProbability[i][j] = 0.95;
+      timeDistribution[i][j] = peak;
+    }
+  }
+
+  return { postProbability, timeDistribution };
+}
+
 export function getDistribution(
   matrix: IntentMatrix,
   userId: UserId,

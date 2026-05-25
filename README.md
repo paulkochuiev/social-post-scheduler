@@ -13,6 +13,21 @@ Without a scheduler, each user samples preferred times independently. For contin
 
 To achieve **P(collision) = 0**, we **discretize** time into slots of width **Δ** (e.g. 1 second) and assign each post a **unique** slot via a deterministic planner.
 
+## Modeling P_ij
+
+**P_ij** describes when user **i** would naturally post on platform **j** during a day. We decompose it into:
+
+1. **p_ij** — probability that user **i** posts on platform **j** today (`postProbability[i][j]`).
+2. **f_ij(t)** — PDF over time-of-day on `[0, daySeconds)` if a post happens (`timeDistribution[i][j].sample()`).
+
+Joint model:
+
+```
+P_ij(time = t and post occurs) = p_ij · f_ij(t)
+```
+
+Sampling in code: draw `post ~ Bernoulli(p_ij)`; if true, draw `desiredTime ~ f_ij`. Implementations include `gaussianPeak` (per-platform peaks), `uniformDay`, and `buildCongestedIntentMatrix` (shared noon peak for stress demos).
+
 ## Why unscheduled posting fails
 
 If user A and user B each pick a random second in `[0, 86400)`, the chance they pick the same second is non-zero (roughly `1/86400` per pair per attempt, and higher with more users and multiple platforms). Real platforms also have API bursts when many clients post “naturally” at peak hours. A queueing layer is required to enforce spacing.
@@ -70,6 +85,17 @@ for intent in intents:
 
 After scheduling, all `scheduledTime` values are distinct and consecutive scheduled times differ by at least **Δ** (monotonic `lastScheduled`). Two different users cannot share a slot, so under this discrete-time model **P(collision) = 0**.
 
+If no slot remains before `daySeconds`, the planner throws `SchedulingError` (day capacity exceeded).
+
+## Publish queue
+
+After EDCR, scheduled posts enter a **`PublishQueue`** ([`src/queue.ts`](src/queue.ts)) ordered by `scheduledTime`:
+
+- `peekDue(now)` — posts ready to publish at or before `now`
+- `dequeue(post)` / `drainDue(now)` — publisher removes handled items
+
+In production this maps to a **Redis ZSET** (score = `scheduledTime`), **SQS delay queue**, or **Kafka** with time-ordered consumption. The queue enforces *when* to publish; EDCR enforces *no two users at the same second*.
+
 ## System design (production sketch)
 
 | Component | Role |
@@ -113,6 +139,7 @@ In-process planner is `O(K log K)`. For large `N × M`, batch by hour-of-day sha
 
 - **Planner crash** — replay from stored intents (idempotent).
 - **Duplicate publish** — idempotency key `(userId, platformId, day, slot)`.
+- **Day capacity exceeded** — `SchedulingError` when `K · Δ` exhausts the day window; requires splitting across days or raising **Δ**.
 
 ### Scope (2-hour take-home)
 
@@ -128,6 +155,23 @@ This repository implements in-memory scheduling and a simulation CLI. It intenti
 | **Per-platform EDCR** | Per platform | Parallel publish | Global collisions possible |
 | **Weighted fair queueing** | Yes | Fairness + fidelity | More complex weights |
 
+## Demonstrations
+
+The CLI runs two scenarios:
+
+| Scenario | N × M | Purpose |
+|----------|-------|---------|
+| **normal** | 5 × 3 | Spread platform peaks — often low delay |
+| **congested** | 20 × 2 | All posts target noon (`desiredTime = 43200`) — **avg/max delay** visible, `collisions` stay 0 |
+
+```bash
+npm run dev                 # both scenarios
+npm run dev -- congested    # congested only
+npm run dev -- normal       # normal only
+```
+
+Congested output sorts by delay (desc) so fidelity vs safety trade-off is visible.
+
 ## How to run
 
 ```bash
@@ -136,7 +180,7 @@ npm test
 npm run dev
 ```
 
-`npm run dev` prints a sample schedule and metrics (`collisions` should be `0`).
+`npm test` — 12 tests including 100-intent property, congested delay, `PublishQueue`, and `SchedulingError`.
 
 Build and run compiled output:
 
@@ -150,10 +194,12 @@ npm start
 | File | Purpose |
 |------|---------|
 | `src/types.ts` | Core types and config |
-| `src/distributions.ts` | Mock **P_ij** (Gaussian peaks per platform) |
-| `src/scheduler.ts` | `generateIntents`, `schedulePosts` (EDCR) |
-| `src/simulate.ts` | Demo CLI |
-| `src/scheduler.test.ts` | Collision-free guarantees |
+| `src/distributions.ts` | Mock **P_ij** (`gaussianPeak`, `uniformDay`, congested matrix) |
+| `src/scheduler.ts` | `generateIntents`, `schedulePosts` (EDCR), `SchedulingError` |
+| `src/queue.ts` | `PublishQueue` — ordered delayed publish |
+| `src/simulate.ts` | Demo CLI (normal + congested) |
+| `src/scheduler.test.ts` | Scheduling guarantees |
+| `src/queue.test.ts` | Queue due/dequeue behavior |
 
 ## Future work
 
